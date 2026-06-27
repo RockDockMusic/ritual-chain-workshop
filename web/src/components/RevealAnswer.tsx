@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { useAccount } from "wagmi";
+import { useAccount, useReadContract } from "wagmi";
 import { useNow } from "@/hooks/useNow";
 import aiJudgeAbi from "@/abi/AIJudge";
 import { contractAddress } from "@/config/contract";
@@ -42,6 +42,26 @@ export function RevealAnswer({
     }
   }, [address, bountyId]);
 
+  // Read this participant's on-chain commitment so we can warn BEFORE spending
+  // gas on a reveal that would revert with "commitment mismatch".
+  const slotQ = useReadContract({
+    address: contractAddress,
+    abi: aiJudgeAbi,
+    functionName: "commitmentSlot",
+    args: address ? [bountyId, address] : undefined,
+    chainId: ritualChain.id,
+    query: { enabled: Boolean(address) },
+  });
+  const slot = slotQ.data as bigint | undefined;
+  const subQ = useReadContract({
+    address: contractAddress,
+    abi: aiJudgeAbi,
+    functionName: "getSubmission",
+    args: slot && slot > 0n ? [bountyId, slot - 1n] : undefined,
+    chainId: ritualChain.id,
+    query: { enabled: Boolean(slot && slot > 0n) },
+  });
+
   if (!canReveal(bounty, now)) return null;
 
   const validSalt = /^0x[0-9a-fA-F]{64}$/.test(salt);
@@ -49,6 +69,10 @@ export function RevealAnswer({
     address && answer && validSalt
       ? computeCommitment(answer.trim(), salt as `0x${string}`, address, bountyId)
       : null;
+
+  const onChainCommitment = subQ.data ? ((subQ.data as readonly unknown[])[1] as `0x${string}`) : undefined;
+  const matches =
+    preview && onChainCommitment ? preview.toLowerCase() === onChainCommitment.toLowerCase() : null;
 
   async function handleReveal(e: React.FormEvent) {
     e.preventDefault();
@@ -82,14 +106,30 @@ export function RevealAnswer({
           </Field>
 
           {preview ? (
-            <Notice tone="zinc">
-              <div className="font-mono text-[11px] break-all">
-                computed: {preview}
-              </div>
+            <Notice tone={matches === false ? "amber" : "zinc"}>
+              <div className="font-mono text-[11px] break-all">computed: {preview}</div>
+              {onChainCommitment ? (
+                <div className="mt-1 font-mono text-[11px] break-all opacity-70">
+                  on-chain: {onChainCommitment}
+                </div>
+              ) : null}
+              {matches === false ? (
+                <div className="mt-2 text-amber-300">
+                  This answer + salt does NOT match your on-chain commitment. Revealing now would
+                  revert (commitment mismatch). Use the exact answer and salt you committed with.
+                </div>
+              ) : null}
+              {matches === true ? (
+                <div className="mt-2 text-green-400">Matches your on-chain commitment ✓</div>
+              ) : null}
             </Notice>
           ) : null}
 
-          <Button type="submit" disabled={!isConnected || !answer.trim() || !validSalt || tx.isBusy} className="w-full">
+          <Button
+            type="submit"
+            disabled={!isConnected || !answer.trim() || !validSalt || matches === false || tx.isBusy}
+            className="w-full"
+          >
             {tx.isBusy ? "Revealing…" : "Open the mask (reveal)"}
           </Button>
           {!isConnected && <p className="text-xs text-zinc-500">Connect your wallet to reveal.</p>}

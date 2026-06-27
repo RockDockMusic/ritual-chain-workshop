@@ -1,5 +1,16 @@
 // ABI for the commit-reveal AIJudge (privacy-preserving bounty judge).
 const abi = [
+  // ---- public getters ----
+  {
+    inputs: [
+      { internalType: "uint256", name: "", type: "uint256" },
+      { internalType: "address", name: "", type: "address" },
+    ],
+    name: "commitmentSlot",
+    outputs: [{ internalType: "uint256", name: "", type: "uint256" }],
+    stateMutability: "view",
+    type: "function",
+  },
   // ---- events ----
   {
     anonymous: false,

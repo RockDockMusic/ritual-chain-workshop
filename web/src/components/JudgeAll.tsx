@@ -36,9 +36,10 @@ export function JudgeAll({
   const walletStatus = useRitualWalletStatus(address);
 
   const count = Number(bounty.submissionCount);
+  const revealedCount = Number(bounty.revealedCount);
 
-  // Gate per spec: owner only, has submissions, not yet judged.
-  if (!isOwner || bounty.judged || bounty.finalized || count === 0) {
+  // Gate per spec: owner only, reveal window over, has revealed answers, not judged.
+  if (!isOwner || bounty.judged || bounty.finalized || revealedCount === 0) {
     return null;
   }
 
@@ -47,16 +48,18 @@ export function JudgeAll({
     setGatherError(null);
     setGathering(true);
     try {
-      // 1–2. Load every submission for this bounty.
+      // 1–2. Load every submission; only REVEALED ones are eligible for judging.
       const submissions: JudgeSubmission[] = [];
       for (let i = 0; i < count; i++) {
-        const [submitter, answer] = await publicClient.readContract({
+        const [submitter, , revealed, answer] = await publicClient.readContract({
           address: contractAddress,
           abi: aiJudgeAbi,
           functionName: "getSubmission",
           args: [bountyId, BigInt(i)],
         });
-        submissions.push({ index: i, submitter, answer });
+        if (revealed) {
+          submissions.push({ index: i, submitter, answer });
+        }
       }
 
       // 3–4. Build the batch judging prompt and encode the Ritual LLM request.
@@ -93,8 +96,8 @@ export function JudgeAll({
   return (
     <Card>
       <CardHeader
-        title="Judge all submissions"
-        subtitle="Sends one Ritual LLM request ranking every submission."
+        title="Act III · Judge all submissions"
+        subtitle="Sends ONE Ritual LLM request ranking every revealed submission."
       />
       <CardBody className="space-y-3">
         <Notice tone="indigo">AI review is advisory. The bounty owner finalizes the winner.</Notice>
@@ -104,14 +107,14 @@ export function JudgeAll({
         <Button onClick={handleJudge} disabled={busy || !fundingReady} className="w-full">
           {gathering ? (
             <>
-              <Spinner /> Gathering {count} submissions…
+              <Spinner /> Gathering {revealedCount} revealed submissions…
             </>
           ) : tx.isBusy ? (
             "Judging…"
           ) : !fundingReady ? (
             "Fund RitualWallet to judge"
           ) : (
-            `Judge all (${count})`
+            `Judge all revealed (${revealedCount})`
           )}
         </Button>
         {gatherError && <Notice tone="red">{gatherError}</Notice>}

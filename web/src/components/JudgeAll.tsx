@@ -72,13 +72,17 @@ export function JudgeAll({
 
       setGathering(false);
 
-      // 5. Submit it on-chain.
+      // 5. Submit it on-chain. We pin an explicit high gas limit: on Ritual the
+      // automatic estimate only covers the first (cheap commitment) pass of the
+      // async precompile, not the replay that decodes the LLM result and writes
+      // it to storage — so an estimated tx runs out of gas mid-settlement.
       await tx.run({
         address: contractAddress,
         abi: aiJudgeAbi,
         functionName: "judgeAll",
         args: [bountyId, llmInput],
         chainId: ritualChain.id,
+        gas: 6_000_000n,
       });
     } catch (e) {
       setGathering(false);

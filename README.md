@@ -5,6 +5,9 @@ cryptographic hash** while submissions are open, so nobody can copy another
 participant's idea. After the deadline, answers are revealed and verified, an AI
 judges them all together in one batch, and a human owner pays the winner.
 
+> **Live demo:** https://rockdockmusic.github.io/ritual-chain-workshop/
+> (connect a wallet on Ritual Chain, id 1979)
+
 > **Required Track (Commit-Reveal) — fully implemented and tested (25 passing tests).**
 > Built on top of the Ritual workshop starter. The contract lives in
 > [`hardhat/contracts/AIJudge.sol`](hardhat/contracts/AIJudge.sol).

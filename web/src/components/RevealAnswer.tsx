@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useAccount, useReadContract } from "wagmi";
 import { useNow } from "@/hooks/useNow";
 import aiJudgeAbi from "@/abi/AIJudge";
@@ -26,21 +26,18 @@ export function RevealAnswer({
   onRevealed: () => void;
 }) {
   const { address, isConnected } = useAccount();
-  const [answer, setAnswer] = useState("");
-  const [salt, setSalt] = useState("");
+  // Track whether the user has manually edited each field. Until they do, the
+  // field shows the locally-stored commitment value. This is robust to mount
+  // ordering / wallet hydration: as soon as `address` is available the stored
+  // value is reflected, without relying on a one-shot effect.
+  const [answerEdit, setAnswerEdit] = useState<string | null>(null);
+  const [saltEdit, setSaltEdit] = useState<string | null>(null);
   const now = useNow();
   const tx = useWriteTx(() => onRevealed());
 
-  // Prefill from the locally-stored commitment, if any.
-  useEffect(() => {
-    if (address) {
-      const mine = recallCommitment(bountyId, address);
-      if (mine) {
-        setAnswer((a) => a || mine.answer);
-        setSalt((s) => s || mine.salt);
-      }
-    }
-  }, [address, bountyId]);
+  const stored = address ? recallCommitment(bountyId, address) : null;
+  const answer = answerEdit ?? stored?.answer ?? "";
+  const salt = saltEdit ?? stored?.salt ?? "";
 
   // Read this participant's on-chain commitment so we can warn BEFORE spending
   // gas on a reveal that would revert with "commitment mismatch".
@@ -98,11 +95,22 @@ export function RevealAnswer({
       />
       <CardBody>
         <form onSubmit={handleReveal} className="space-y-3">
+          {stored ? (
+            <Notice tone="green">
+              Found your saved commitment for this bounty in this browser — answer and salt are
+              filled in below.
+            </Notice>
+          ) : (
+            <Notice tone="amber">
+              No saved commitment found in this browser for the connected wallet. If you committed
+              elsewhere, paste your answer and salt manually.
+            </Notice>
+          )}
           <Field label="Answer">
-            <Textarea value={answer} onChange={(e) => setAnswer(e.target.value)} rows={4} />
+            <Textarea value={answer} onChange={(e) => setAnswerEdit(e.target.value)} rows={4} />
           </Field>
           <Field label="Salt" hint="Auto-filled if you committed in this browser.">
-            <Input value={salt} onChange={(e) => setSalt(e.target.value)} placeholder="0x…" />
+            <Input value={salt} onChange={(e) => setSaltEdit(e.target.value)} placeholder="0x…" />
           </Field>
 
           {preview ? (

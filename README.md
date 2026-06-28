@@ -1,101 +1,89 @@
-# Privacy-Preserving AI Bounty Judge
+# AIJudge — Commit-Reveal Bounty Specification
 
-A commit-reveal bounty judge for Ritual Chain. Answers stay **hidden behind a
-cryptographic hash** while submissions are open, so nobody can copy another
-participant's idea. After the deadline, answers are revealed and verified, an AI
-judges them all together in one batch, and a human owner pays the winner.
+**Status:** implemented, tested (25/25), deployed and exercised on Ritual L1.
+**Track:** Commit-Reveal (required).
+**Chain:** Ritual L1, id `1979`.
+**Frontend:** https://rockdockmusic.github.io/ritual-chain-workshop/
 
-> **Live demo:** https://rockdockmusic.github.io/ritual-chain-workshop/
-> (connect a wallet on Ritual Chain, id 1979)
-
-> **Required Track (Commit-Reveal) — fully implemented and tested (25 passing tests).**
-> Built on top of the Ritual workshop starter. The contract lives in
-> [`hardhat/contracts/AIJudge.sol`](hardhat/contracts/AIJudge.sol).
-
-### Deliverables (assignment checklist)
-
-| Deliverable | Where |
-|-------------|-------|
-| ✅ Updated Solidity contract | [`hardhat/contracts/AIJudge.sol`](hardhat/contracts/AIJudge.sol) |
-| ✅ README explaining the lifecycle | **this file** |
-| ✅ Test plan for reveal cases | [`docs/TEST_PLAN.md`](docs/TEST_PLAN.md) |
-| ✅ Architecture note | [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) |
-| ✅ Reflection (5–8 sentences) | [`docs/REFLECTION.md`](docs/REFLECTION.md) |
+This document specifies the `AIJudge` contract: a sealed-bid bounty in which
+answers are committed as hashes, revealed and verified after a deadline, judged
+by a single batched LLM inference, and finalized by a human. It reads as a spec,
+not a tutorial.
 
 ---
 
-## 1. The problem we're fixing
+## 0. Glossary
 
-In the original workshop version, an answer became **public the instant it was
-submitted**. That created an unfair race:
-
-> Alice submits *"use solar power"*. Bob reads it, submits *"use solar power **plus
-> battery storage**"*, and wins. Bob never had a better idea — he just got to see
-> Alice's first.
-
-In a winner-takes-all bounty, letting people read each other's answers before the
-deadline destroys fairness. **The goal: keep answers hidden until judging.**
+| Term | Definition |
+|------|------------|
+| **Commitment** | `keccak256(answer, salt, sender, bountyId)` — the only thing stored during submission. |
+| **Reveal** | Supplying `(answer, salt)` so the contract can recompute and verify the commitment. |
+| **Eligible** | A submission whose reveal verified; the only kind that can be judged or win. |
+| **Batch judging** | A single LLM call covering all eligible answers at once. Never one call per answer. |
+| **Owner** | The address that created the bounty and funds/judges/finalizes it. |
 
 ---
 
-## 2. The solution: commit-reveal
+## 1. Threat addressed
 
-The trick is to never put the answer on-chain during the submission phase — only
-an irreversible **fingerprint** (a hash) of it.
+The starter contract stored answers in plaintext at submission time. This admits a
+**front-running / copy attack**:
+
+```
+t0  A submits  "solar power"                      (visible on-chain)
+t1  B reads A's answer, submits "solar power + storage"
+t2  deadline; B wins with a derivative of A's idea
+```
+
+The submission phase must therefore reveal **zero information** about answer
+contents. Hash commitments satisfy this: the preimage is computationally hidden,
+so an observer at `t0..t1` learns nothing usable.
+
+---
+
+## 2. Commitment construction
 
 ```
 commitment = keccak256(answer, salt, msg.sender, bountyId)
 ```
 
-- `answer` — your real submission
-- `salt` — a random secret number you keep
-- `msg.sender` — your address (binds the commitment to you)
-- `bountyId` — which bounty it's for
+Binding rationale, field by field:
 
-You can't go from the hash back to the answer, so others see only noise. Later you
-prove the answer was yours all along by re-supplying `answer + salt`; the contract
-recomputes the hash and checks it matches.
+- `answer` — the payload; never transmitted until reveal.
+- `salt` — caller-generated entropy; without it, a small answer space could be
+  brute-forced from the hash.
+- `msg.sender` — **anti-theft.** A copied commitment cannot be revealed by a
+  different address; the recomputed hash diverges.
+- `bountyId` — **anti-replay.** A commitment is scoped to one bounty.
 
-**Why include `msg.sender` and `bountyId`?**
-- `msg.sender` stops *reveal-theft*: Bob can't copy Alice's commitment hash and
-  reveal it under his own address, because the hash is tied to Alice's address.
-- `bountyId` stops *replay*: the same commitment can't be reused across bounties.
+Client and contract MUST hash identically. See `web/src/lib/*` for the client
+side and `computeCommitment(...)` on-chain for parity.
 
 ---
 
-## 3. Lifecycle (the full flow)
+## 3. State machine
 
 ```
-  createBounty ─▶ submitCommitment ─▶ revealAnswer ─▶ judgeAll ─▶ finalizeWinner
-   ─────────────   ──────────────────   ─────────────   ─────────   ──────────────
-   owner funds      only the hash        prove answer    one batch   human owner
-   reward + sets    goes on-chain        with salt;      LLM call    picks winner;
-   two deadlines    (answer hidden)      hash verified   over all    reward paid
-                                                          revealed
-   [before submissionDeadline] [submission→reveal window] [after revealDeadline]
+            createBounty                 submitCommitment*               revealAnswer*
+  (none) ───────────────▶ COMMIT ───────────────────────────▶ COMMIT ───────────────────▶ REVEAL
+                            │  accepts commitments               │  (after submissionDeadline)
+                            │  until submissionDeadline          ▼  accepts reveals until revealDeadline
+                            │                                  REVEAL
+                            │                                    │  judgeAll (owner, after revealDeadline)
+                            ▼                                    ▼
+                          JUDGED ◀───────────────────────────  JUDGING
+                            │  finalizeWinner (owner)
+                            ▼
+                        FINALIZED
 ```
 
-A worked example with the same characters:
-
-1. **createBounty** — Owner opens *"Best startup idea"* with 5 RITUAL reward, a
-   submission deadline (1h) and a reveal deadline (2h).
-2. **submitCommitment** — Alice computes `keccak256("solar power", salt, alice, 1)`
-   and submits only that hash. Bob sees the hash but **cannot read "solar power"**,
-   so he can't copy it. Bob commits his own idea blind.
-3. **revealAnswer** — After the submission deadline, Alice calls
-   `revealAnswer(1, "solar power", salt)`. The contract recomputes the hash and
-   confirms it matches → her answer is now public and **eligible**. (Wrong answer,
-   wrong salt, or wrong sender → rejected.)
-4. **judgeAll** — After the reveal deadline, the owner sends **all revealed answers
-   in one batch** to the Ritual LLM precompile (`0x0802`). The AI returns a
-   recommended ranking. (Never one LLM call per answer.)
-5. **finalizeWinner** — The owner reviews the AI's recommendation and calls
-   `finalizeWinner(1, winnerIndex)`. The reward is paid to that revealed entry.
-   **The AI only recommends; a human makes the final call.**
+`*` = callable repeatedly by distinct participants within the window.
 
 ---
 
-## 4. Required functions (exact signatures)
+## 4. Interface
+
+Required functions:
 
 ```solidity
 function submitCommitment(uint256 bountyId, bytes32 commitment) external;
@@ -104,101 +92,102 @@ function judgeAll(uint256 bountyId, bytes calldata llmInput) external;
 function finalizeWinner(uint256 bountyId, uint256 winnerIndex) external;
 ```
 
-(Plus `createBounty(...)` to open a bounty and helper views like `getBounty`,
-`getSubmission`, and `computeCommitment`.)
+Supporting:
+
+```solidity
+function createBounty(...) external payable;   // open + fund + set deadlines
+function getBounty(uint256) external view;
+function getSubmission(uint256, uint256) external view;
+function computeCommitment(...) external pure;
+```
 
 ---
 
-## 5. Rules the contract enforces
+## 5. Invariants
 
-| Rule | Why it matters |
-|------|----------------|
-| Commit only **before** the submission deadline | the window must close before anyone reveals |
-| One commitment per address per bounty | no spamming / no multiple shots |
-| Reveal only in `[submissionDeadline, revealDeadline)` | reveals happen after submissions are locked |
-| Reveal valid **only if the hash matches** | proves you didn't change your answer |
-| Unrevealed submissions are **ineligible** | can't win without proving your entry |
-| Judge only **after** the reveal deadline | the AI sees the full, final field |
-| Finalize only **after** judging, owner-only | a human owns the payout decision |
-| Only one winner is paid | winner-takes-all, reward zeroed after payout |
+| # | Invariant | Enforced by |
+|---|-----------|-------------|
+| I1 | A commitment is accepted only while `now < submissionDeadline`. | window check |
+| I2 | At most one commitment per `(bountyId, address)`. | per-sender slot |
+| I3 | A reveal is accepted only while `submissionDeadline ≤ now < revealDeadline`. | window check |
+| I4 | A reveal succeeds iff the recomputed hash equals the stored commitment. | hash compare |
+| I5 | Only eligible (revealed) submissions may be judged or finalized. | eligibility flag |
+| I6 | `judgeAll` runs only after `revealDeadline`. | window check |
+| I7 | `finalizeWinner` is owner-only and requires a prior `judgeAll`. | access + phase check |
+| I8 | The reward is paid once, to a single winner, then zeroed. | payout guard |
+
+Each invariant has at least one corresponding negative test in
+`hardhat/contracts/AIJudge.t.sol` (25 tests total).
 
 ---
 
-## 6. How to run it
+## 6. Judging path
+
+`judgeAll(bountyId, llmInput)` performs **one** inference over the entire eligible
+set. The client assembles all revealed answers into a single prompt, encodes the
+Ritual LLM request, and passes it as `llmInput`. On Ritual the call hits the LLM
+precompile (`0x0802`, model GLM-4.7-FP8); the verdict is stored on-chain as
+`aiReview` in the form `{ "winnerIndex": n, "summary": "…" }`.
+
+The model's output is **advisory**. `finalizeWinner` requires a human owner to
+ratify (or override) the recommendation before any funds move.
+
+---
+
+## 7. Ritual L1 operational constraints
+
+| Constraint | Value / handling |
+|------------|------------------|
+| `block.timestamp` unit | **milliseconds** (not seconds). All deadlines computed in ms. |
+| `judgeAll` gas | **pinned to 6,000,000.** Async settlement (~1.09M gas) exceeds the auto-estimate, which only covers the first pass. |
+| LLM escrow | prepaid RITUAL in `RitualWallet` `0x532F0dF0…`, worst-case ≈ 0.311 RITUAL, lock must outlive the async callback. |
+| Portability | On non-Ritual EVM chains, pass empty `llmInput`; the lifecycle still completes and the verdict reference is recorded off-chain. |
+
+---
+
+## 8. Deployment record
+
+```
+network    Ritual L1 (id 1979)
+contract   0x47CcF584DB2482B2A339945BC34E0368317CBFEF
+deploy tx  0x7020852509782efea1da7d65a44684b770e1b7b02a3222b312acbeb599b6bbe6
+```
+
+A complete `createBounty → submitCommitment → revealAnswer → judgeAll →
+finalizeWinner` cycle was executed on the live network, with each call landing in
+its correct time window. During the commit phase `getSubmission` returns an empty
+`answer`; it is populated only after a verified reveal — direct evidence that
+contents stay hidden until reveal.
+
+Explorer: https://explorer.ritualfoundation.org/address/0x47CcF584DB2482B2A339945BC34E0368317CBFEF
+
+---
+
+## 9. Build & test
 
 ```bash
 cd hardhat
 npm install
-npx hardhat test solidity     # 25 tests: valid + invalid reveal cases
-```
-
-Deploy (Ritual L1 or any EVM chain):
-
-```bash
+npx hardhat test solidity
 npx hardhat ignition deploy ignition/modules/AIJudge.ts --network ritual
 ```
 
-**Portability:** the contract works on **any EVM chain**. On a non-Ritual chain
-the LLM precompile has no code, so you pass an empty `llmInput` to `judgeAll` and
-record the verdict reference off-chain via `setVerdictReference`. On Ritual, you
-build the batch LLM request off-chain and pass it as `llmInput`.
+---
 
-> ⚠️ **Ritual note:** Ritual's `block.timestamp` is in **milliseconds** (not
-> seconds like a standard EVM chain). Choose your deadlines accordingly when
-> interacting with a live Ritual node.
+## 10. Supplementary documents
+
+- `docs/TEST_PLAN.md` — enumerated reveal cases (valid, wrong answer, wrong salt,
+  wrong sender, double reveal, late reveal).
+- `docs/ARCHITECTURE.md` — commit-reveal vs. Ritual-native TEE judging.
+- `docs/REFLECTION.md` — design notes.
 
 ---
 
-## 7. A note on privacy (commit-reveal vs Ritual-native)
-
-Commit-reveal keeps answers hidden **during submission**, but they become public
-**at reveal time** (before the AI judges). That's enough to stop copying, because
-the submission window is already closed. If you need answers to stay secret *even
-through judging*, the **Advanced Track** uses Ritual's TEE to decrypt and batch-judge
-encrypted answers privately — designed in [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
-
----
-
-## 8. Live deployment & on-chain proof (Ritual Chain, id 1979)
-
-The contract is deployed and a full bounty lifecycle — including a **real Ritual
-LLM judging call** — was executed on the live Ritual network. Every phase ran in
-its correct time window.
-
-**Contract:** [`0x47CcF584DB2482B2A339945BC34E0368317CBFEF`](https://explorer.ritualfoundation.org/address/0x47CcF584DB2482B2A339945BC34E0368317CBFEF)
-**Deploy tx:** [`0x70208525…99b6bbe6`](https://explorer.ritualfoundation.org/tx/0x7020852509782efea1da7d65a44684b770e1b7b02a3222b312acbeb599b6bbe6)
-
-The bounty uses two deadlines (Ritual `block.timestamp` is in **milliseconds**).
-A full commit → reveal → judge → finalize cycle was run end-to-end through the
-front-end:
-
-- `createBounty` opens the bounty, funds the reward, sets both deadlines.
-- `submitCommitment` posts only the commitment hash — the answer stays hidden.
-- `revealAnswer` reveals (answer, salt); the contract recomputes and verifies the hash.
-- `judgeAll` sends one batched request to the Ritual LLM precompile (`0x0802`).
-  The GLM-4.7 model returned a real verdict that is stored on-chain as `aiReview`,
-  e.g. `{"winnerIndex": 0, "summary": "The submission clearly defines the product
-  as an AI copilot…"}`. **The judge tx pins a 6,000,000 gas limit** so the async
-  settlement (which decodes the LLM response and writes it to storage, ~1.09M gas)
-  does not run out of gas mid-replay.
-- `finalizeWinner` lets the human owner ratify the winner and pays the reward.
-
-**Deadline rules are respected end-to-end:** the commitment lands before the
-submission deadline, the reveal happens strictly inside the reveal window, and
-judging + finalization only happen after the reveal deadline. During the
-submission phase `getSubmission` returns an empty `answer`; it only becomes the
-revealed text after a valid reveal — proving the answer stays hidden until reveal.
-
-> Funding note: `judgeAll` with a live LLM call requires prepaid RITUAL locked in
-> the `RitualWallet` (`0x532F0dF0…`). The LLM precompile's worst-case escrow is
-> ~0.311 RITUAL (refundable); the front-end deposits a margin above that before
-> judging and the lock must outlive the async callback.
-
-## Repo layout
-
+## 11. Source tree
 
 ```
-/hardhat   -> Solidity contract (AIJudge.sol), tests (AIJudge.t.sol), deploy module
-/web       -> frontend starter (unchanged)
-/docs      -> test plan, architecture note, reflection
+hardhat/contracts/AIJudge.sol      contract under specification
+hardhat/contracts/AIJudge.t.sol    25 tests
+web/                               frontend
+docs/                              test plan · architecture · reflection
 ```

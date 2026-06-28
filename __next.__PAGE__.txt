@@ -1,0 +1,9 @@
+1:"$Sreact.fragment"
+2:I[47257,["/ritual-chain-workshop/_next/static/chunks/1tc8kq8qniudu.js","/ritual-chain-workshop/_next/static/chunks/1istsz6rz76go.js","/ritual-chain-workshop/_next/static/chunks/158myu8e_yme3.js"],"ClientPageRoot"]
+3:I[52683,["/ritual-chain-workshop/_next/static/chunks/1tc8kq8qniudu.js","/ritual-chain-workshop/_next/static/chunks/1istsz6rz76go.js","/ritual-chain-workshop/_next/static/chunks/158myu8e_yme3.js","/ritual-chain-workshop/_next/static/chunks/1vwontlektsnv.js","/ritual-chain-workshop/_next/static/chunks/33mtcf14lmb6z.js","/ritual-chain-workshop/_next/static/chunks/2230qyus623kl.js","/ritual-chain-workshop/_next/static/chunks/2_pq5v3kvq2hf.js"],"default"]
+6:I[97367,["/ritual-chain-workshop/_next/static/chunks/1tc8kq8qniudu.js","/ritual-chain-workshop/_next/static/chunks/1istsz6rz76go.js","/ritual-chain-workshop/_next/static/chunks/158myu8e_yme3.js"],"OutletBoundary"]
+7:"$Sreact.suspense"
+0:{"rsc":["$","$1","c",{"children":[["$","$L2",null,{"Component":"$3","serverProvidedParams":{"searchParams":{},"params":{},"promises":["$@4","$@5"]}}],[["$","script","script-0",{"src":"/ritual-chain-workshop/_next/static/chunks/1vwontlektsnv.js","async":true}],["$","script","script-1",{"src":"/ritual-chain-workshop/_next/static/chunks/33mtcf14lmb6z.js","async":true}],["$","script","script-2",{"src":"/ritual-chain-workshop/_next/static/chunks/2230qyus623kl.js","async":true}],["$","script","script-3",{"src":"/ritual-chain-workshop/_next/static/chunks/2_pq5v3kvq2hf.js","async":true}]],["$","$L6",null,{"children":["$","$7",null,{"name":"Next.MetadataOutlet","children":"$@8"}]}]]}],"isPartial":false,"staleTime":300,"varyParams":null,"buildId":"7FsQRfzYYh6jc9TVJwuZ0"}
+4:{}
+5:"$0:rsc:props:children:0:props:serverProvidedParams:params"
+8:null
